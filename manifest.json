@@ -3,15 +3,11 @@
   "name": "Phishing URL Checker",
   "version": "1.0",
   "description": "Checks if a URL is malicious and blocks access if necessary.",
-  "permissions": [
-    "activeTab",
-    "storage",
-    "webRequest",
-    "webRequestBlocking",
-    "http://localhost:5001/"
-  ],
+  "permissions": ["activeTab", "storage", "webRequest", "webRequestBlocking"],
   "host_permissions": [
     "http://localhost:5001/",
+    "http://localhost:5000/",
+    "http://localhost:3000/",
     "<all_urls>"
   ],
   "background": {
@@ -21,7 +17,7 @@
     "default_popup": "popup.html"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://localhost:5001 http://localhost:5000 http://localhost:3000;"
   },
   "web_accessible_resources": [
     {
