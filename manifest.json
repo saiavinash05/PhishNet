@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Phishing URL Checker",
+  "version": "1.0",
+  "description": "Checks if a URL is malicious and blocks access if necessary.",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "permissions": ["activeTab", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
