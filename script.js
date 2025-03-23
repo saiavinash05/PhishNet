@@ -5,7 +5,7 @@ document
     const resultDiv = document.getElementById("result");
 
     try {
-      const response = await fetch("http://localhost:5001/check-url", {
+      const response = await fetch("http://localhost:5001/check-url.js", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
