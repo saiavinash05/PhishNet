@@ -1,38 +1,38 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <title>Warning</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-      text-align: center;
-    }
-    button {
-      margin: 10px;
-      padding: 10px 20px;
-      font-size: 16px;
-    }
-  </style>
-</head>
-<body>
-  <h1>Warning!</h1>
-  <p>The URL you are trying to visit is potentially malicious.</p>
-  <button id="proceed">Proceed Anyway</button>
-  <button id="block">Block</button>
+  <head>
+    <title>Warning</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        text-align: center;
+      }
+      button {
+        margin: 10px;
+        padding: 10px 20px;
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Warning!</h1>
+    <p>The URL you are trying to visit is potentially malicious.</p>
+    <button id="proceed">Proceed Anyway</button>
+    <button id="block">Block</button>
 
-  <script>
-    document.getElementById("proceed").addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "proceed" }, () => {
-        window.close();
+    <script>
+      document.getElementById("proceed").addEventListener("click", () => {
+        chrome.runtime.sendMessage({ action: "proceed" }, () => {
+          window.close();
+        });
       });
-    });
 
-    document.getElementById("block").addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "block" }, () => {
-        window.close();
+      document.getElementById("block").addEventListener("click", () => {
+        chrome.runtime.sendMessage({ action: "block" }, () => {
+          window.close();
+        });
       });
-    });
-  </script>
-</body>
+    </script>
+  </body>
 </html>
