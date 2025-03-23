@@ -4,10 +4,6 @@ const app = express();
 
 app.use(express.json()); 
 
-// Import the log handler
-const logHandler = require("./logHandler");
-app.use("/", logHandler);
-
 app.post("/check-url", async (req, res) => {
   const { url } = req.body;
 
