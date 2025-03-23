@@ -9,7 +9,7 @@ app.use(express.json());
 
 // CORS Configuration
 const allowedOrigins = [
-  "chrome-extension://ghbfehiekhnaenahcjjhgolcnecgeakg", // Your extension's origin
+  "chrome-extension://cgplnmomiemafejcojlhejobbbdbmlgg", // Your extension's origin
   "http://localhost:5001", // Allow requests from your local server
 ];
 app.use(
@@ -29,10 +29,12 @@ const dnsBlacklistApis = [
   {
     url: "https://www.virustotal.com/api/v3/urls",
     apiKey: process.env.VIRUSTOTAL_API_KEY,
+    method: "POST", // VirusTotal requires a POST request
   },
   {
-    url: "https://api.abuseipdb.com/api/v2/check",
-    apiKey: process.env.ABUSEIPDB_API_KEY,
+    url: "https://api.urlscan.io/v1/scan/",
+    apiKey: process.env.URLSCAN_API_KEY,
+    method: "POST", // URLScan.io requires a POST request
   },
 ];
 
@@ -98,6 +100,12 @@ function validateDomain(domain) {
 // Validate URL Format
 function isValidUrl(url) {
   try {
+    // Basic regex to check for valid URL format
+    const urlPattern =
+      /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+    if (!urlPattern.test(url)) {
+      return false;
+    }
     new URL(url); // This will throw an error if the URL is invalid
     return true;
   } catch {
@@ -108,67 +116,96 @@ function isValidUrl(url) {
 // Expand Shortened URL
 async function expandUrl(url) {
   try {
-    console.log("Expanding URL:", url); // Log the URL being expanded
     const response = await axios.get(`${unshortenApi}${url}`);
-    console.log("Expanded URL result:", response.data.resolved_url); // Log the result
-    return response.data.resolved_url;
+    return response.data.resolved_url || url; // Return original URL if expansion fails
   } catch (error) {
-    console.error("URL Expansion Error:", error.response?.data || error.message); // Log the error
+    console.error("URL Expansion Error:", error);
     return url; // Return original URL if expansion fails
+  }
+}
+
+// Extract Domain from URL
+function extractDomain(url) {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.hostname;
+  } catch (error) {
+    console.error("Error extracting domain:", error);
+    return null; // Return null for invalid URLs
   }
 }
 
 // Check URL for Phishing
 app.post("/check-url", async (req, res) => {
-  console.log("Received request with URL:", req.body.url); // Log the incoming URL
-
   const { url } = req.body;
 
   // Rate Limiting
   const rateLimitResult = rateLimitCheck(url);
   if (rateLimitResult) {
-    console.log("Rate limit exceeded for URL:", url); // Log rate limit issue
     return res.status(429).json({ error: rateLimitResult.reason });
   }
 
   // Validate URL format
   if (!isValidUrl(url)) {
-    console.log("Invalid URL format:", url); // Log invalid URL
     return res.status(400).json({ error: "Invalid URL format" });
   }
 
   // Expand shortened URL
-  const expandedUrl = await expandUrl(url);
-  console.log("Expanded URL:", expandedUrl); // Log expanded URL
-
-  // Extract domain
-  let domain;
+  // Expand shortened URL
+  let expandedUrl;
   try {
-    domain = new URL(expandedUrl).hostname;
-    console.log("Extracted domain:", domain); // Log extracted domain
+    expandedUrl = await expandUrl(url);
+    console.log("Expanded URL result:", expandedUrl);
   } catch (error) {
-    console.error("Error extracting domain:", error); // Log domain extraction error
-    return res
-      .status(400)
-      .json({ error: "Invalid or potentially harmful URL scheme" });
+    console.error("URL Expansion Error:", error);
+    expandedUrl = ""; // Set as empty string to fallback
   }
 
-  // Validate domain
+  // Fallback to original if expansion failed or returned empty
+  const finalUrl = expandedUrl || url; // If expansion fails, use the original URL
+  console.log("Final URL used for domain extraction:", finalUrl);
+
+  // Validate the URL format before extracting the domain
+  let domain;
+  try {
+    // Only proceed if finalUrl is a valid URL
+    if (!isValidUrl(finalUrl)) {
+      return res.status(400).json({ error: "Invalid URL format" });
+    }
+    domain = new URL(finalUrl).hostname;
+    console.log("Extracted domain:", domain);
+  } catch (error) {
+    console.error("Error extracting domain:", error);
+    return res.status(400).json({ error: "Failed to extract domain" });
+  }
+
+  // Validate Domain (ensure it's a proper domain)
+  try {
+    const extractedDomain = extractDomain(domain);
+    if (!extractedDomain) {
+      return res.status(400).json({
+        error: "Invalid or potentially harmful URL scheme",
+      });
+    }
+    domain = extractedDomain; // Update domain with the extracted value
+  } catch (error) {
+    console.error("Error extracting domain:", error);
+    return res.status(400).json({ error: "Invalid URL" });
+  }
+
+  // Domain validation
   const domainValidation = validateDomain(domain);
   if (!domainValidation.isValid) {
-    console.log("Invalid domain:", domainValidation.reason); // Log invalid domain
     return res.status(400).json({ error: domainValidation.reason });
   }
 
-  // Check cache
+  // Check Cache (per domain)
   const cachedResult = getCachedResult(domain);
   if (cachedResult) {
-    console.log("Serving from cache for domain:", domain); // Log cache hit
     return res.status(200).json(cachedResult);
   }
 
   // Run all checks in parallel
-  console.log("Running checks for domain:", domain); // Log start of checks
   const [dnsResult, typoResult, whoisResult, sslResult, phishingResult] =
     await Promise.all([
       isDnsBlacklisted(domain),
@@ -178,12 +215,9 @@ app.post("/check-url", async (req, res) => {
       isPhishing(expandedUrl),
     ]);
 
-  const isMalicious =
-    dnsResult || typoResult || whoisResult || !sslResult || phishingResult;
-
-  // Prepare response
   const result = {
-    isMalicious,
+    isMalicious:
+      dnsResult || typoResult || whoisResult || !sslResult || phishingResult,
     reasons: {
       dnsBlacklisted: dnsResult,
       typoSquatting: typoResult,
@@ -193,15 +227,16 @@ app.post("/check-url", async (req, res) => {
     },
   };
 
-  // Cache the result
+  // Cache the result (per domain)
   setCache(domain, result);
 
   // Send response
-  if (isMalicious) {
+  if (result.isMalicious) {
     console.log("Malicious URL detected:", domain); // Log malicious URL
     return res.status(403).json({
       error: "Access blocked",
-      message: "This website is potentially malicious. Proceed at your own risk.",
+      message:
+        "This website is potentially malicious. Proceed at your own risk.",
       reasons: result.reasons,
       bypassUrl: expandedUrl,
     });
@@ -219,14 +254,24 @@ async function isDnsBlacklisted(domain) {
   for (const api of dnsBlacklistApis) {
     try {
       console.log("Checking DNS blacklist for domain:", domain); // Log the domain being checked
-      const response = await axios.get(`${api.url}/${domain}`, {
-        headers: { "x-apikey": api.apiKey },
-      });
+      const response = await axios.post(
+        api.url,
+        { url: domain },
+        {
+          headers: {
+            "x-apikey": api.apiKey,
+            "Content-Type": "application/json",
+          },
+        }
+      );
       const stats = response.data.data.attributes.last_analysis_stats;
       console.log("DNS blacklist result:", stats); // Log the result
       return stats.malicious > 0 || stats.phishing > 0 || stats.malware > 0;
     } catch (error) {
-      console.error(`DNS Blacklist API Error (${api.url}):`, error.response?.data || error.message); // Log the error
+      console.error(
+        `DNS Blacklist API Error (${api.url}):`,
+        error.response?.data || error.message
+      ); // Log the error
       return false;
     }
   }
@@ -243,16 +288,26 @@ function isTypoSquatting(domain) {
 // WHOIS Lookup
 async function getWhoisData(domain) {
   try {
-    console.log("Checking WHOIS for domain:", domain); // Log the domain being checked
     const response = await axios.get(
       `${whoisApi}?domainName=${domain}&apiKey=${whoisApiKey}`
     );
+
+    // Check if the response contains the expected data
+    if (
+      !response.data ||
+      !response.data.WhoisRecord ||
+      !response.data.WhoisRecord.createdDate
+    ) {
+      console.error("WHOIS API Error: Invalid response format");
+      return false;
+    }
+
     const creationDate = new Date(response.data.WhoisRecord.createdDate);
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
     return creationDate > oneMonthAgo;
   } catch (error) {
-    console.error("WHOIS API Error:", error.response?.data || error.message); // Log the error
+    console.error("WHOIS API Error:", error);
     return false;
   }
 }
@@ -264,7 +319,10 @@ async function hasValidCertificate(domain) {
     const response = await axios.get(`${sslValidationApi}?host=${domain}`);
     return response.data.endpoints.some((endpoint) => endpoint.grade >= "A");
   } catch (error) {
-    console.error("SSL Validation API Error:", error.response?.data || error.message); // Log the error
+    console.error(
+      "SSL Validation API Error:",
+      error.response?.data || error.message
+    ); // Log the error
     return false;
   }
 }
@@ -287,7 +345,10 @@ async function isPhishing(url) {
     console.log("Phishing check result:", stats); // Log the result
     return stats.malicious > 0 || stats.phishing > 0;
   } catch (error) {
-    console.error("Phishing Detection API Error:", error.response?.data || error.message); // Log the error
+    console.error(
+      "Phishing Detection API Error:",
+      error.response?.data || error.message
+    ); // Log the error
     return false;
   }
 }
