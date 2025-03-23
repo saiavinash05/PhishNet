@@ -30,7 +30,7 @@ document
         document
           .getElementById("proceedButton")
           .addEventListener("click", () => {
-            window.location.href = data.bypassUrl; 
+            window.location.href = data.bypassUrl;
           });
       } else if (response.ok) {
         resultDiv.innerHTML = `
