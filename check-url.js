@@ -7,11 +7,11 @@ const port = 5001;
 
 app.use(express.json());
 
+// CORS Configuration
 const allowedOrigins = [
-  "https://your-chrome-extension-id.chromiumapp.org",
-  "http://localhost:5001", 
+  "chrome-extension://ghbfehiekhnaenahcjjhgolcnecgeakg", // Your extension's origin
+  "http://localhost:5001", // Allow requests from your local server
 ];
-
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -50,6 +50,7 @@ const virusTotalApiKey = process.env.VIRUSTOTAL_API_KEY;
 // URL Expansion API (Unshorten.me)
 const unshortenApi = "https://unshorten.me/json/";
 
+// Trusted Domains List
 const trustedDomains = [
   "google.com",
   "facebook.com",
@@ -59,16 +60,16 @@ const trustedDomains = [
 
 // In-Memory Cache
 const memoryCache = new Map();
-const cacheDuration = 3600000; 
+const cacheDuration = 3600000; // 1 hour
 
 // Rate Limiting
 const rateLimitMap = new Map();
-const rateLimitDuration = 5000; 
+const rateLimitDuration = 5000; // 5 seconds
 const maxRequests = 5;
 
-// Validating domain
+// Validate Domain
 function validateDomain(domain) {
-  // Non-ASCII chars
+  // Non-ASCII characters
   if (/[^\x00-\x7F]/.test(domain)) {
     return { isValid: false, reason: "Domain contains non-ASCII characters" };
   }
@@ -94,60 +95,80 @@ function validateDomain(domain) {
   return { isValid: true };
 }
 
-// URL format
+// Validate URL Format
 function isValidUrl(url) {
-  const urlPattern = /^(https?:\/\/)?([\w.-]+)\.([a-z]{2,})(\/\S*)?$/i;
-  return urlPattern.test(url);
-}
-
-// URL expansion
-async function expandUrl(url) {
   try {
-    const response = await axios.get(`${unshortenApi}${url}`);
-    return response.data.resolved_url;
-  } catch (error) {
-    console.error("URL Expansion Error:", error);
-    return url; 
+    new URL(url); // This will throw an error if the URL is invalid
+    return true;
+  } catch {
+    return false;
   }
 }
 
-// URL phishing check
+// Expand Shortened URL
+async function expandUrl(url) {
+  try {
+    console.log("Expanding URL:", url); // Log the URL being expanded
+    const response = await axios.get(`${unshortenApi}${url}`);
+    console.log("Expanded URL result:", response.data.resolved_url); // Log the result
+    return response.data.resolved_url;
+  } catch (error) {
+    console.error("URL Expansion Error:", error.response?.data || error.message); // Log the error
+    return url; // Return original URL if expansion fails
+  }
+}
+
+// Check URL for Phishing
 app.post("/check-url", async (req, res) => {
+  console.log("Received request with URL:", req.body.url); // Log the incoming URL
+
   const { url } = req.body;
 
+  // Rate Limiting
   const rateLimitResult = rateLimitCheck(url);
   if (rateLimitResult) {
+    console.log("Rate limit exceeded for URL:", url); // Log rate limit issue
     return res.status(429).json({ error: rateLimitResult.reason });
   }
 
+  // Validate URL format
   if (!isValidUrl(url)) {
+    console.log("Invalid URL format:", url); // Log invalid URL
     return res.status(400).json({ error: "Invalid URL format" });
   }
 
+  // Expand shortened URL
   const expandedUrl = await expandUrl(url);
+  console.log("Expanded URL:", expandedUrl); // Log expanded URL
 
-  // Domain validation
+  // Extract domain
   let domain;
   try {
     domain = new URL(expandedUrl).hostname;
-  } catch {
+    console.log("Extracted domain:", domain); // Log extracted domain
+  } catch (error) {
+    console.error("Error extracting domain:", error); // Log domain extraction error
     return res
       .status(400)
       .json({ error: "Invalid or potentially harmful URL scheme" });
   }
 
+  // Validate domain
   const domainValidation = validateDomain(domain);
   if (!domainValidation.isValid) {
+    console.log("Invalid domain:", domainValidation.reason); // Log invalid domain
     return res.status(400).json({ error: domainValidation.reason });
   }
 
-  // Cache check
+  // Check cache
   const cachedResult = getCachedResult(domain);
   if (cachedResult) {
+    console.log("Serving from cache for domain:", domain); // Log cache hit
     return res.status(200).json(cachedResult);
   }
 
-  // Run all checks parallel
+  // Run all checks in parallel
+  console.log("Running checks for domain:", domain); // Log start of checks
   const [dnsResult, typoResult, whoisResult, sslResult, phishingResult] =
     await Promise.all([
       isDnsBlacklisted(domain),
@@ -160,48 +181,56 @@ app.post("/check-url", async (req, res) => {
   const isMalicious =
     dnsResult || typoResult || whoisResult || !sslResult || phishingResult;
 
-  // If the URL is malicious, block it and provide a bypass option
-  if (isMalicious) {
-    return res.status(403).json({
-      error: "Access blocked",
-      message:
-        "This website is potentially malicious. Proceed at your own risk.",
-      reasons: {
-        dnsBlacklisted: dnsResult,
-        typoSquatting: typoResult,
-        newlyRegistered: whoisResult,
-        invalidSSL: !sslResult,
-        phishing: phishingResult,
-      },
-      bypassUrl: expandedUrl, 
-    });
-  }
-
-  // If URL is safe, allow access
+  // Prepare response
   const result = {
-    isMalicious: false,
-    message: "This website is safe.",
+    isMalicious,
+    reasons: {
+      dnsBlacklisted: dnsResult,
+      typoSquatting: typoResult,
+      newlyRegistered: whoisResult,
+      invalidSSL: !sslResult,
+      phishing: phishingResult,
+    },
   };
 
-  // Caching the result
+  // Cache the result
   setCache(domain, result);
 
-  res.status(200).json(result);
+  // Send response
+  if (isMalicious) {
+    console.log("Malicious URL detected:", domain); // Log malicious URL
+    return res.status(403).json({
+      error: "Access blocked",
+      message: "This website is potentially malicious. Proceed at your own risk.",
+      reasons: result.reasons,
+      bypassUrl: expandedUrl,
+    });
+  } else {
+    console.log("Safe URL:", domain); // Log safe URL
+    return res.status(200).json({
+      isMalicious: false,
+      message: "This website is safe.",
+    });
+  }
 });
 
+// DNS Blacklist Check
 async function isDnsBlacklisted(domain) {
   for (const api of dnsBlacklistApis) {
     try {
+      console.log("Checking DNS blacklist for domain:", domain); // Log the domain being checked
       const response = await axios.get(`${api.url}/${domain}`, {
         headers: { "x-apikey": api.apiKey },
       });
       const stats = response.data.data.attributes.last_analysis_stats;
+      console.log("DNS blacklist result:", stats); // Log the result
       return stats.malicious > 0 || stats.phishing > 0 || stats.malware > 0;
     } catch (error) {
-      console.error(`DNS Blacklist API Error (${api.url}):`, error);
+      console.error(`DNS Blacklist API Error (${api.url}):`, error.response?.data || error.message); // Log the error
+      return false;
     }
   }
-  return false; 
+  return false;
 }
 
 // Typo-Squatting Check
@@ -214,6 +243,7 @@ function isTypoSquatting(domain) {
 // WHOIS Lookup
 async function getWhoisData(domain) {
   try {
+    console.log("Checking WHOIS for domain:", domain); // Log the domain being checked
     const response = await axios.get(
       `${whoisApi}?domainName=${domain}&apiKey=${whoisApiKey}`
     );
@@ -222,7 +252,7 @@ async function getWhoisData(domain) {
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
     return creationDate > oneMonthAgo;
   } catch (error) {
-    console.error("WHOIS API Error:", error);
+    console.error("WHOIS API Error:", error.response?.data || error.message); // Log the error
     return false;
   }
 }
@@ -230,10 +260,11 @@ async function getWhoisData(domain) {
 // SSL Validation Check
 async function hasValidCertificate(domain) {
   try {
+    console.log("Checking SSL for domain:", domain); // Log the domain being checked
     const response = await axios.get(`${sslValidationApi}?host=${domain}`);
     return response.data.endpoints.some((endpoint) => endpoint.grade >= "A");
   } catch (error) {
-    console.error("SSL Validation API Error:", error);
+    console.error("SSL Validation API Error:", error.response?.data || error.message); // Log the error
     return false;
   }
 }
@@ -241,6 +272,7 @@ async function hasValidCertificate(domain) {
 // Phishing Detection Check
 async function isPhishing(url) {
   try {
+    console.log("Checking phishing for URL:", url); // Log the URL being checked
     const response = await axios.post(
       phishingDetectionApi,
       { url: url },
@@ -252,9 +284,10 @@ async function isPhishing(url) {
       }
     );
     const stats = response.data.data.attributes.last_analysis_stats;
+    console.log("Phishing check result:", stats); // Log the result
     return stats.malicious > 0 || stats.phishing > 0;
   } catch (error) {
-    console.error("Phishing Detection API Error:", error);
+    console.error("Phishing Detection API Error:", error.response?.data || error.message); // Log the error
     return false;
   }
 }
@@ -272,11 +305,12 @@ function levenshteinDistance(a, b) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
     }
-    [prev, curr] = [curr, prev]; 
+    [prev, curr] = [curr, prev];
   }
   return prev[b.length];
 }
 
+// Rate Limiting
 function rateLimitCheck(url) {
   const now = Date.now();
   if (!rateLimitMap.has(url)) {
@@ -296,7 +330,7 @@ function rateLimitCheck(url) {
   return null;
 }
 
-// Caching 
+// Caching
 function getCachedResult(domain) {
   if (memoryCache.has(domain)) {
     const { data, timestamp } = memoryCache.get(domain);
@@ -311,13 +345,15 @@ function setCache(domain, data) {
   memoryCache.set(domain, { data, timestamp: Date.now() });
 }
 
-app.listen(port, () => {
-  console.log(`Backend running at http://localhost:${port}`);
-});
+// Serve Frontend
 const path = require("path");
-
-app.use(express.static(path.join(__dirname, "..", "frontend")));
+app.use(express.static(path.join(__dirname, "..", "Frontend")));
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "..", "frontend", "index.html"));
+  res.sendFile(path.join(__dirname, "..", "Frontend", "index.html"));
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Backend running at http://localhost:${port}`);
 });
