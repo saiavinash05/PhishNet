@@ -1,13 +1,13 @@
-PhishNet: AI-Powered Phishing URL Detection Extension
+# PhishNet: AI-Powered Phishing URL Detection Extension
 
 
-Project Overview:
+## Project Overview:
 
 This project is a browser extension integrated with a backend system designed to detect phishing websites and malicious URLs in real-time. It utilizes multiple external APIs, SSL validation, domain age checks, and other indicators to classify URLs as Safe, Suspicious, or Malicious. Each scan is logged in a MongoDB database, and results are displayed through a dashboard and the browser extension.
 
 
 
-Features:
+## Features:
 
 Real-time phishing detection and classification
 
@@ -27,7 +27,7 @@ Basic email scraping to extract and scan URLs from emails
 
 
 
-Technology Stack:
+## Technology Stack:
 
 Frontend: HTML, CSS, JavaScript
 
@@ -38,7 +38,7 @@ Database: MongoDB
 Browser Extension: JavaScript (Manifest v3)
 
 
-External APIs:
+#### External APIs:
 
 VirusTotal
 
@@ -52,12 +52,12 @@ Unshorten.me API
 
 
 
-How It Works:
+## How It Works:
 
 Users visit a website or provide a URL, or the system scrapes URLs from emails.
 
 
-The backend processes the URL through:
+#### The backend processes the URL through:
 
 Blacklist checks (VirusTotal, AbuseIPDB)
 
